@@ -1,6 +1,9 @@
 package rtp
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+)
 
 type RtpH264Depacketizer struct {
 	InputChan  chan interface{}
@@ -19,6 +22,7 @@ func NewRtpH264Depacketizer() *RtpH264Depacketizer {
 		for {
 			packet := (<-demuxer.InputChan).(*RtpPacket)
 			header := packet.Payload[0]
+			// fmt.Println("h264 payload type:", header&31)
 			switch header & 31 {
 			// case 0, 31:
 			// 	continue
@@ -46,14 +50,23 @@ func NewRtpH264Depacketizer() *RtpH264Depacketizer {
 
 				if (fu_header>>6)&1 == 1 {
 					// End
-					Payload := make([]byte, 0)
-					Payload = append(Payload, 0|(header&96)|(fu_header&31))
-					for _, fragment := range fragments {
-						Payload = append(Payload, fragment.Payload[2:]...)
-					}
-					packet.Payload = Payload
-					demuxer.OutputChan <- packet
+					// Payload := make([]byte, 0)
+					// Payload = append(Payload, 0|(header&96)|(fu_header&31))
+					// for _, fragment := range fragments {
+					// 	Payload = append(Payload, fragment.Payload[2:]...)
+					// }
+					// packet.Payload = Payload
+					// demuxer.OutputChan <- packet
 
+					// fragments = nil
+
+					buf := bytes.NewBuffer(make([]byte, 1024*1024))
+					buf.WriteByte(0 | (header & 96) | (fu_header & 31))
+					for _, fragment := range fragments {
+						buf.Write(fragment.Payload[2:])
+					}
+					packet.Payload = buf.Bytes()
+					demuxer.OutputChan <- packet
 					fragments = nil
 				}
 			default:
