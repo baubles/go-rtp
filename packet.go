@@ -3,36 +3,9 @@ package rtp
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 )
 
-type RtpDemuxer struct {
-	InputChan  chan interface{}
-	OutputChan chan interface{}
-}
-
-func NewRtpDemuxer() *RtpDemuxer {
-	demuxer := &RtpDemuxer{
-		InputChan:  make(chan interface{}),
-		OutputChan: make(chan interface{}),
-	}
-
-	go func() {
-		for {
-			data := (<-demuxer.InputChan).([]byte)
-			packet, err := unmarshalRtpPacket(data)
-			if err != nil {
-				fmt.Printf("Can't unmarshal rtp packet: %s\n", err.Error())
-				continue
-			}
-			demuxer.OutputChan <- packet
-		}
-	}()
-
-	return demuxer
-}
-
-type RtpPacket struct {
+type Packet struct {
 	Version        uint8
 	Padding        bool
 	Extension      bool
@@ -45,11 +18,9 @@ type RtpPacket struct {
 	Payload        []byte
 }
 
-func unmarshalRtpPacket(data []byte) (*RtpPacket, error) {
-	var err error
-
-	packet := &RtpPacket{}
-	reader := bytes.NewReader(data)
+func UnmarshalPacket(b []byte) (packet *Packet, err error) {
+	packet = &Packet{}
+	reader := bytes.NewReader(b)
 
 	var first32 uint32
 	err = binary.Read(reader, binary.BigEndian, &first32)
