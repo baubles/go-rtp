@@ -46,7 +46,11 @@ func (proc *psUnpackProcessor) Release() {
 	next.Release()
 }
 
-func (proc *psUnpackProcessor) Process(pkt *Packet) {
+func (proc *psUnpackProcessor) Process(packet interface{}) error {
+	pkt, ok := packet.(*Packet)
+	if !ok {
+		return fmt.Errorf("psUnpackProcessor process pkt is not *Packet")
+	}
 	buf := bytes.NewBuffer(proc.buf)
 	buf.Write(pkt.Payload)
 	if pkt.Marker {
@@ -56,20 +60,20 @@ func (proc *psUnpackProcessor) Process(pkt *Packet) {
 		}
 		if len(h264) > 0 {
 			pkt.Payload = h264
-			proc.nextProcess(pkt)
+			return proc.nextProcess(pkt)
 		}
-		buf.Reset()
 	}
-
+	return nil
 }
 
-func (proc *psUnpackProcessor) nextProcess(pkt *Packet) {
+func (proc *psUnpackProcessor) nextProcess(pkt interface{}) error {
 	proc.mux.Lock()
 	next := proc.next
 	proc.mux.Unlock()
 	if next != nil {
-		next.Process(pkt)
+		return next.Process(pkt)
 	}
+	return nil
 }
 
 func (proc *psUnpackProcessor) h264(buf []byte) (h264buf []byte, err error) {

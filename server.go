@@ -102,7 +102,13 @@ func (srv *Server) loopHandleRead() {
 			srv.sessions.Store(pkt.SSRC, sess)
 			select {
 			case srv.accept <- sess:
-				async(&srv.wg, sess.process)
+				async(&srv.wg, func() {
+					err := sess.process()
+					if err != nil {
+						sess.close()
+						srv.sessions.Delete(sess.ssrc)
+					}
+				})
 			default:
 				srv.sessions.Delete(pkt.SSRC)
 				log.Println("session can't be accepted, will be drop")

@@ -2,6 +2,7 @@ package rtp
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"sync"
 )
@@ -37,7 +38,11 @@ func (proc *h264UnpackProcessor) Release() {
 	next.Release()
 }
 
-func (proc *h264UnpackProcessor) Process(pkt *Packet) {
+func (proc *h264UnpackProcessor) Process(packet interface{}) error {
+	pkt, ok := packet.(*Packet)
+	if !ok {
+		return fmt.Errorf("h264UnpackProcessor process pkt is not *Packet")
+	}
 	header := pkt.Payload[0]
 	switch header & 31 {
 	case 28:
@@ -51,7 +56,7 @@ func (proc *h264UnpackProcessor) Process(pkt *Packet) {
 		if proc.fragmentsLen != 0 && proc.fragments[proc.fragmentsLen-1].SequenceNumber != pkt.SequenceNumber-1 {
 			log.Println("h264 unpack process: packet loss?")
 			proc.fragmentsLen = 0
-			return
+			return nil
 		}
 
 		proc.fragments[proc.fragmentsLen] = pkt
@@ -66,20 +71,21 @@ func (proc *h264UnpackProcessor) Process(pkt *Packet) {
 			}
 			pkt.Payload = buf.Bytes()
 			proc.fragmentsLen = 0
-			proc.nextProcess(pkt)
+			return proc.nextProcess(pkt)
 		}
 	default:
 		proc.fragmentsLen = 0
-		proc.nextProcess(pkt)
+		return proc.nextProcess(pkt)
 	}
-
+	return nil
 }
 
-func (proc *h264UnpackProcessor) nextProcess(pkt *Packet) {
+func (proc *h264UnpackProcessor) nextProcess(pkt interface{}) error {
 	proc.mux.Lock()
 	next := proc.next
 	proc.mux.Unlock()
 	if next != nil {
-		next.Process(pkt)
+		return next.Process(pkt)
 	}
+	return nil
 }

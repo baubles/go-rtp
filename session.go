@@ -13,6 +13,7 @@ type Session struct {
 	mux            sync.RWMutex
 	closed         chan bool
 	lastActiveTime int64
+	errch          chan error
 }
 
 func newSession(ssrc uint32, addr net.Addr) *Session {
@@ -20,6 +21,7 @@ func newSession(ssrc uint32, addr net.Addr) *Session {
 		ssrc:   ssrc,
 		addr:   addr,
 		closed: make(chan bool),
+		errch:  make(chan error),
 	}
 	return sess
 }
@@ -50,16 +52,20 @@ func (sess *Session) close() {
 	}
 }
 
-func (sess *Session) process() {
+func (sess *Session) process() error {
 	for {
 		select {
 		case pkt := <-sess.receive:
 			if sess.processor != nil {
-				sess.processor.Process(pkt)
+				err := sess.processor.Process(pkt)
+				if err != nil {
+					sess.errch <- err
+				}
+				return err
 			}
 		case <-sess.closed:
 			sess.release()
-			return
+			return nil
 		}
 	}
 }
@@ -73,4 +79,14 @@ func (sess *Session) release() {
 	if processor != nil {
 		processor.Release()
 	}
+}
+
+func (sess *Session) Wait() error {
+	select {
+	case <-sess.closed:
+		return nil
+	case err := <-sess.errch:
+		return err
+	}
+
 }
