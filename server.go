@@ -54,6 +54,7 @@ func (srv *Server) Serve() (err error) {
 	srv.closed = make(chan bool)
 	srv.accept = make(chan *Session)
 	srv.listener = listener
+	srv.sessions = &sync.Map{}
 	async(&srv.wg, srv.loopHandleRead)
 	async(&srv.wg, srv.loopHandleUnactive)
 
