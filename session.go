@@ -15,6 +15,7 @@ type Session struct {
 	lastActiveTime     int64
 	errch              chan error
 	lastSequenceNumber uint16
+	attach             chan Processor
 }
 
 func newSession(ssrc uint32, addr net.Addr) *Session {
@@ -23,7 +24,8 @@ func newSession(ssrc uint32, addr net.Addr) *Session {
 		addr:    addr,
 		closed:  make(chan bool),
 		errch:   make(chan error, 1),
-		receive: make(chan *Packet, 20),
+		receive: make(chan *Packet, 100),
+		attach:  make(chan Processor, 1),
 	}
 	return sess
 }
@@ -43,6 +45,8 @@ func (sess *Session) Attach(processor Processor) {
 	sess.mux.Unlock()
 	if old != nil {
 		old.Release()
+	} else {
+		sess.attach <- processor
 	}
 }
 
@@ -55,6 +59,11 @@ func (sess *Session) close() {
 }
 
 func (sess *Session) process() error {
+	select {
+	case <-sess.attach:
+	case <-sess.closed:
+		return nil
+	}
 	for {
 		select {
 		case pkt := <-sess.receive:

@@ -16,7 +16,7 @@ type h264UnpackProcessor struct {
 
 func NewH264UnpackProcessor() Processor {
 	return &h264UnpackProcessor{
-		fragments: make([]*Packet, 2),
+		fragments: make([]*Packet, 100),
 	}
 }
 
