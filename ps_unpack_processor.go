@@ -16,16 +16,18 @@ var psmLen = 6
 var PackInvalidError = fmt.Errorf("pack is invalid")
 
 type psUnpackProcessor struct {
-	firstMainFrame bool
-	buf            []byte
-	next           Processor
-	mux            sync.Mutex
+	firstMainFrame     bool
+	buf                *bytes.Buffer
+	next               Processor
+	mux                sync.Mutex
+	lastSequenceNumber uint16
+	loss               bool
 }
 
 func NewPSUnpackProcessor() Processor {
 	return &psUnpackProcessor{
 		firstMainFrame: false,
-		buf:            make([]byte, 1024*1024),
+		buf:            bytes.NewBuffer(make([]byte, 0, 1024*1024)),
 	}
 }
 
@@ -43,18 +45,32 @@ func (proc *psUnpackProcessor) Release() {
 	proc.mux.Lock()
 	next := proc.next
 	proc.mux.Unlock()
-	next.Release()
+	if next != nil {
+		next.Release()
+	}
 }
 
 func (proc *psUnpackProcessor) Process(packet interface{}) error {
-	pkt, ok := packet.(*Packet)
-	if !ok {
-		return fmt.Errorf("psUnpackProcessor process pkt is not *Packet")
+	pkt, _ := packet.(*Packet)
+
+	defer func() { proc.lastSequenceNumber = pkt.SequenceNumber }()
+
+	if pkt.SequenceNumber-proc.lastSequenceNumber > 1 {
+		proc.loss = true
 	}
-	buf := bytes.NewBuffer(proc.buf)
-	buf.Write(pkt.Payload)
+
+	if proc.loss {
+		proc.buf.Reset()
+		if pkt.Marker {
+			proc.loss = false
+		}
+		return nil
+	}
+
+	proc.buf.Write(pkt.Payload)
 	if pkt.Marker {
-		h264, err := proc.h264(buf.Bytes())
+		h264, err := proc.h264(proc.buf.Bytes())
+		proc.buf.Reset()
 		if err != nil {
 			log.Println("process unpack ps packet err:", err)
 		}
@@ -89,9 +105,10 @@ func (proc *psUnpackProcessor) h264(buf []byte) (h264buf []byte, err error) {
 		return nil, PackInvalidError
 	}
 	next := buf[offset:]
-	h264 := bytes.NewBuffer(make([]byte, 1024*1024))
+	h264 := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 
 	for len(next) >= psStartCodeLen {
+		// logger.Println("debug", "next", len(next))
 		if proc.firstMainFrame && next[0] == '\x00' && next[1] == '\x00' && next[2] == '\x01' && next[3] == '\xE0' {
 			// pes
 			if pseLen >= len(next) {
@@ -148,8 +165,7 @@ func (proc *psUnpackProcessor) h264(buf []byte) (h264buf []byte, err error) {
 			}
 			next = next[offset:]
 		} else {
-			fmt.Printf("%x %x %x %x\n", next[0], next[1], next[2], next[3])
-			err = PackInvalidError
+			err = fmt.Errorf("ps packet invalid, first main frame: %t start code: %x %x %x %x", proc.firstMainFrame, next[0], next[1], next[2], next[3])
 			break
 		}
 	}

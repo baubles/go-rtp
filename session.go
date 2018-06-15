@@ -6,22 +6,24 @@ import (
 )
 
 type Session struct {
-	addr           net.Addr
-	ssrc           uint32
-	receive        chan *Packet
-	processor      Processor
-	mux            sync.RWMutex
-	closed         chan bool
-	lastActiveTime int64
-	errch          chan error
+	addr               net.Addr
+	ssrc               uint32
+	receive            chan *Packet
+	processor          Processor
+	mux                sync.RWMutex
+	closed             chan bool
+	lastActiveTime     int64
+	errch              chan error
+	lastSequenceNumber uint16
 }
 
 func newSession(ssrc uint32, addr net.Addr) *Session {
 	sess := &Session{
-		ssrc:   ssrc,
-		addr:   addr,
-		closed: make(chan bool),
-		errch:  make(chan error),
+		ssrc:    ssrc,
+		addr:    addr,
+		closed:  make(chan bool),
+		errch:   make(chan error, 1),
+		receive: make(chan *Packet, 20),
 	}
 	return sess
 }
@@ -56,13 +58,21 @@ func (sess *Session) process() error {
 	for {
 		select {
 		case pkt := <-sess.receive:
+			if pkt.SequenceNumber-sess.lastSequenceNumber > 1 {
+				logger.Printf("session loss %d packets, SequenceNumber lastest : %d, current is %d\n", pkt.SequenceNumber-sess.lastSequenceNumber-1, sess.lastSequenceNumber, pkt.SequenceNumber)
+			}
+
 			if sess.processor != nil {
 				err := sess.processor.Process(pkt)
 				if err != nil {
+					logger.Println("session process err", err)
 					sess.errch <- err
+					return err
 				}
-				return err
 			}
+
+			sess.lastSequenceNumber = pkt.SequenceNumber
+
 		case <-sess.closed:
 			sess.release()
 			return nil

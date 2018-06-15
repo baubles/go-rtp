@@ -53,10 +53,7 @@ func (proc *flvMuxerProcessor) nextProcess(pkt interface{}) error {
 }
 
 func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
-	packet, ok := pkt.(*Packet)
-	if !ok {
-		return fmt.Errorf("FlvMuxerProcessor process pkt is not *Packet")
-	}
+	packet, _ := pkt.(*Packet)
 	if proc.firstTimestamp == 0 {
 		proc.firstTimestamp = packet.Timestamp
 	}

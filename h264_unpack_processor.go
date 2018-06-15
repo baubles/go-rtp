@@ -2,7 +2,6 @@ package rtp
 
 import (
 	"bytes"
-	"fmt"
 	"log"
 	"sync"
 )
@@ -17,7 +16,7 @@ type h264UnpackProcessor struct {
 
 func NewH264UnpackProcessor() Processor {
 	return &h264UnpackProcessor{
-		fragments: make([]*Packet, 0, 2),
+		fragments: make([]*Packet, 2),
 	}
 }
 
@@ -35,20 +34,19 @@ func (proc *h264UnpackProcessor) Release() {
 	proc.mux.Lock()
 	next := proc.next
 	proc.mux.Unlock()
-	next.Release()
+	if next != nil {
+		next.Release()
+	}
 }
 
 func (proc *h264UnpackProcessor) Process(packet interface{}) error {
-	pkt, ok := packet.(*Packet)
-	if !ok {
-		return fmt.Errorf("h264UnpackProcessor process pkt is not *Packet")
-	}
+	pkt, _ := packet.(*Packet)
 	header := pkt.Payload[0]
 	switch header & 31 {
+	// FU-A
 	case 28:
-		// FU-A
-		fu_header := pkt.Payload[1]
-		if (fu_header>>7)&1 == 1 {
+		fuheader := pkt.Payload[1]
+		if (fuheader>>7)&1 == 1 {
 			// Start
 			proc.fragmentsLen = 0
 		}
@@ -62,9 +60,9 @@ func (proc *h264UnpackProcessor) Process(packet interface{}) error {
 		proc.fragments[proc.fragmentsLen] = pkt
 		proc.fragmentsLen++
 
-		if (fu_header>>6)&1 == 1 {
-			buf := bytes.NewBuffer(make([]byte, 1024*1024))
-			buf.WriteByte(0 | (header & 96) | (fu_header & 31))
+		if (fuheader>>6)&1 == 1 {
+			buf := bytes.NewBuffer(make([]byte, 0, 1024*1024))
+			buf.WriteByte(0 | (header & 96) | (fuheader & 31))
 
 			for i := 0; i < proc.fragmentsLen; i++ {
 				buf.Write(proc.fragments[i].Payload[2:])

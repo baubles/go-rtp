@@ -2,7 +2,6 @@ package rtp
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -91,13 +90,14 @@ func (srv *Server) loopHandleRead() {
 
 		pkt, err := UnmarshalPacket(buf[:n])
 		if err != nil {
-			log.Println("rtp packet unmarshal err:", err)
+			logger.Println("rtp packet unmarshal err:", err)
 		}
 
 		val, ok := srv.sessions.Load(pkt.SSRC)
 		var sess *Session
 		if ok {
 			sess = val.(*Session)
+			sess.lastActiveTime = time.Now().UnixNano()
 		} else {
 			sess = newSession(pkt.SSRC, raddr)
 			srv.sessions.Store(pkt.SSRC, sess)
@@ -112,7 +112,7 @@ func (srv *Server) loopHandleRead() {
 				})
 			default:
 				srv.sessions.Delete(pkt.SSRC)
-				log.Println("session can't be accepted, will be drop")
+				logger.Println("session can't be accepted, will be drop")
 				continue
 			}
 		}
@@ -120,7 +120,7 @@ func (srv *Server) loopHandleRead() {
 		select {
 		case sess.receive <- pkt:
 		default:
-			log.Println("pkt can't be receive, will be drop")
+			// logger.Println("pkt can't be receive, will be drop")
 		}
 	}
 
