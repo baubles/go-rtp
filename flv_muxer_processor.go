@@ -3,7 +3,6 @@ package rtp
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -107,7 +106,7 @@ func (muxer *flvMuxerProcessor) muxVideoPacket(packet *Packet, dts, pts uint32) 
 				Data:            marshalAVCDecoderConfigurationRecord(record),
 			}
 			videoDataPayload = marshalVideoData(videoData)
-			fmt.Println("SPS & PPS")
+			// fmt.Println("SPS & PPS")
 			muxer.SPSSent = true
 		} else {
 			return nil
@@ -122,7 +121,7 @@ func (muxer *flvMuxerProcessor) muxVideoPacket(packet *Packet, dts, pts uint32) 
 		}
 		// fmt.Println(packet.Payload[0] & 31)
 		if packet.Payload[0]&31 == 5 {
-			fmt.Println("Key!")
+			// fmt.Println("Key!")
 			videoData.FrameType = FRAME_TYPE_KEY
 		}
 		videoDataPayload = marshalVideoData(videoData)
