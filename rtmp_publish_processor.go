@@ -105,18 +105,18 @@ func (handler *rtmpSinkHandler) OnStatus(conn rtmp.OutboundConn) {
 }
 
 func (handler *rtmpSinkHandler) OnClosed(conn rtmp.Conn) {
-	logger.Printf("rtmp closed\n")
+	// logger.Printf("rtmp closed\n")
 }
 
 func (handler *rtmpSinkHandler) OnReceived(conn rtmp.Conn, message *rtmp.Message) {
 }
 
 func (handler *rtmpSinkHandler) OnReceivedRtmpCommand(conn rtmp.Conn, command *rtmp.Command) {
-	logger.Printf("rtmp receive command: %+v\n", command)
+	// logger.Printf("rtmp receive command: %+v\n", command)
 }
 
 func (handler *rtmpSinkHandler) OnStreamCreated(conn rtmp.OutboundConn, stream rtmp.OutboundStream) {
-	logger.Printf("rtmp stream created: %d\n", stream.ID())
+	// logger.Printf("rtmp stream created: %d\n", stream.ID())
 	handler.createStreamChan <- stream
 }
 func (handler *rtmpSinkHandler) OnPlayStart(stream rtmp.OutboundStream) {
@@ -124,6 +124,6 @@ func (handler *rtmpSinkHandler) OnPlayStart(stream rtmp.OutboundStream) {
 }
 func (handler *rtmpSinkHandler) OnPublishStart(stream rtmp.OutboundStream) {
 	// Set chunk buffer size
-	logger.Printf("rtmp publish start\n")
+	// logger.Printf("rtmp publish start\n")
 	handler.startPublishChan <- stream
 }
