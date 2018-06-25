@@ -17,9 +17,7 @@ type flvMuxerProcessor struct {
 }
 
 func NewFlvMuxerProcessor() Processor {
-	proc := &flvMuxerProcessor{
-		firstTs: time.Now().UnixNano(),
-	}
+	proc := &flvMuxerProcessor{}
 
 	return proc
 }
@@ -55,6 +53,10 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 	packet, _ := pkt.(*Packet)
 	if proc.firstTimestamp == 0 {
 		proc.firstTimestamp = packet.Timestamp
+	}
+
+	if proc.firstTs == 0 {
+		proc.firstTs = time.Now().UnixNano()
 	}
 
 	dts := uint32((time.Now().UnixNano() - proc.firstTs) / 1000000)
@@ -235,7 +237,7 @@ const (
 )
 
 func marshalVideoData(videoData *VideoData) []byte {
-	writer := bytes.NewBuffer([]byte{})
+	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 
 	binary.Write(writer, binary.BigEndian, (videoData.FrameType<<4)|videoData.CodecID)
 	binary.Write(writer, binary.BigEndian, int32(0)|(int32(videoData.AVCPacketType)<<24)|videoData.CompositionTime)
@@ -248,7 +250,7 @@ func marshalVideoData(videoData *VideoData) []byte {
 }
 
 func marshalFlvTag(flvTag *FlvTag) []byte {
-	writer := bytes.NewBuffer([]byte{})
+	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 
 	binary.Write(writer, binary.BigEndian, uint32(0)|(uint32(flvTag.TagType)<<24)|flvTag.DataSize)
 	binary.Write(writer, binary.BigEndian, flvTag.Timestamp<<8)
@@ -259,7 +261,7 @@ func marshalFlvTag(flvTag *FlvTag) []byte {
 }
 
 func marshalAVCDecoderConfigurationRecord(record *AVCDecoderConfigurationRecord) []byte {
-	writer := bytes.NewBuffer([]byte{})
+	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 
 	binary.Write(writer, binary.BigEndian, record.ConfigurationVersion)
 	binary.Write(writer, binary.BigEndian, record.AVCProfileIndication)
@@ -277,7 +279,7 @@ func marshalAVCDecoderConfigurationRecord(record *AVCDecoderConfigurationRecord)
 }
 
 func marshalAudioData(audioData *AudioData) []byte {
-	writer := bytes.NewBuffer([]byte{})
+	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 
 	binary.Write(writer, binary.BigEndian, uint8(0)|(audioData.SoundFormat<<4)|(audioData.SoundRate<<2)|(audioData.SoundSize<<1)|(audioData.SoundType))
 	binary.Write(writer, binary.BigEndian, audioData.AACPacketType)
