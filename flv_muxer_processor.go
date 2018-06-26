@@ -57,9 +57,23 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 		proc.firstTimestamp = packet.Timestamp
 	}
 
+<<<<<<< HEAD
 	deltaTimestamp := packet.Timestamp - proc.lastTimestamp
 	if proc.deltaTimestamp == 0 || (deltaTimestamp < proc.deltaTimestamp && deltaTimestamp > 0) {
 		proc.deltaTimestamp = deltaTimestamp
+=======
+	if proc.firstTs == 0 {
+		proc.firstTs = time.Now().UnixNano()
+	}
+
+	dts := uint32((time.Now().UnixNano() - proc.firstTs) / 1000000)
+	pts := uint32((packet.Timestamp-proc.firstTimestamp)/90) + 1000
+
+	videoDataPayload := proc.muxVideoPacket(packet, dts, pts)
+
+	if videoDataPayload == nil {
+		return nil
+>>>>>>> 77269f1bf206b631a63ab996452f5e2617e4d9a5
 	}
 
 	defer func() {
