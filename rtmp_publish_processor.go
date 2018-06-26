@@ -49,11 +49,21 @@ func (proc *rtmpPublishProcessor) Process(packet interface{}) error {
 	if !ok {
 		return fmt.Errorf("rtmpPublishProcessor process pkt is not *FlvTag")
 	}
-	if flvTag.TagType == TAG_VIDEO {
-		return proc.stream.PublishVideoData(flvTag.Data, flvTag.Timestamp)
-	} else {
-		return proc.stream.PublishAudioData(flvTag.Data, flvTag.Timestamp)
-	}
+
+	// switch flvTag.TagType {
+	// case TAG_VIDEO:
+	// 	return proc.stream.PublishVideoData(flvTag.Data, flvTag.Timestamp)
+	// case TAG_AUDIO:
+	// 	return proc.stream.PublishAudioData(flvTag.Data, flvTag.Timestamp)
+	// case TAG_SCRIPT:
+	// 	return proc.stream.PublishData(flvTag.TagType, flvTag.Data, flvTag.Timestamp)
+	// default:
+	// 	return nil
+	// }
+
+	// fmt.Println("flv type", flvTag.TagType)
+
+	return proc.stream.PublishData(flvTag.TagType, flvTag.Data, flvTag.Timestamp)
 }
 
 func (proc *rtmpPublishProcessor) Attach(next Processor) {

@@ -4,22 +4,22 @@ import (
 	"bytes"
 	"encoding/binary"
 	"sync"
-	"time"
+
+	amf "github.com/zhangpeihao/goamf"
 )
 
 type flvMuxerProcessor struct {
 	SPS, PPS       []byte
 	SPSSent        bool
 	firstTimestamp uint32
-	firstTs        int64
 	next           Processor
 	mux            sync.Mutex
+	lastTimestamp  uint32
+	deltaTimestamp uint32
 }
 
 func NewFlvMuxerProcessor() Processor {
-	proc := &flvMuxerProcessor{
-		firstTs: time.Now().UnixNano(),
-	}
+	proc := &flvMuxerProcessor{}
 
 	return proc
 }
@@ -57,10 +57,83 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 		proc.firstTimestamp = packet.Timestamp
 	}
 
-	dts := uint32((time.Now().UnixNano() - proc.firstTs) / 1000000)
-	pts := uint32((packet.Timestamp-proc.firstTimestamp)/90) + 1000
+	deltaTimestamp := packet.Timestamp - proc.lastTimestamp
+	if proc.deltaTimestamp == 0 || (deltaTimestamp < proc.deltaTimestamp && deltaTimestamp > 0) {
+		proc.deltaTimestamp = deltaTimestamp
+	}
 
-	videoDataPayload := proc.muxVideoPacket(packet, dts, pts)
+	defer func() {
+		proc.lastTimestamp = packet.Timestamp
+	}()
+
+	dts := uint32((packet.Timestamp-proc.firstTimestamp)/90) + 1000
+	pts := dts + 500
+
+	var videoDataPayload []byte
+
+	nalt := packet.Payload[0] & 31
+
+	switch nalt {
+	case 7:
+		proc.SPS = packet.Payload
+	case 8:
+		proc.PPS = packet.Payload
+	}
+
+	if nalt == 7 || nalt == 8 {
+		if proc.SPS != nil && proc.PPS != nil && proc.SPSSent == false && proc.deltaTimestamp > 0 {
+			metaData := &MetaData{
+				FrameRate: 90000 / proc.deltaTimestamp,
+				// HasVideo:     true,
+				VideoCodecID: CODEC_AVC,
+			}
+			metaDataPayload := marshalMetaData(metaData)
+			flvTag := &FlvTag{
+				TagType:   TAG_SCRIPT,
+				DataSize:  uint32(len(metaDataPayload)),
+				Timestamp: 0,
+				Data:      metaDataPayload,
+			}
+
+			if err := proc.nextProcess(flvTag); err != nil {
+				return err
+			}
+
+			record := &AVCDecoderConfigurationRecord{
+				ConfigurationVersion: 1,
+				AVCProfileIndication: proc.SPS[1],
+				ProfileCompatibility: proc.SPS[2],
+				AVCLevelIndication:   proc.SPS[3],
+				SPS:                  proc.SPS,
+				PPS:                  proc.PPS,
+			}
+
+			videoData := &VideoData{
+				FrameType:       FRAME_TYPE_KEY,
+				CodecID:         CODEC_AVC,
+				AVCPacketType:   AVC_SEQ_HEADER,
+				CompositionTime: int32(pts - dts),
+				Data:            marshalAVCDecoderConfigurationRecord(record),
+			}
+			videoDataPayload = marshalVideoData(videoData)
+			proc.SPSSent = true
+		} else {
+			return nil
+		}
+	} else if proc.SPSSent {
+		videoData := &VideoData{
+			FrameType:       FRAME_TYPE_INTER,
+			CodecID:         CODEC_AVC,
+			AVCPacketType:   AVC_NALU,
+			CompositionTime: int32(pts - dts),
+			Data:            packet.Payload,
+		}
+
+		if nalt == 5 {
+			videoData.FrameType = FRAME_TYPE_KEY
+		}
+		videoDataPayload = marshalVideoData(videoData)
+	}
 
 	if videoDataPayload == nil {
 		return nil
@@ -73,62 +146,76 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 		Data:      videoDataPayload,
 	}
 
-	proc.nextProcess(flvTag)
-	return nil
+	return proc.nextProcess(flvTag)
 }
 
-func (muxer *flvMuxerProcessor) muxVideoPacket(packet *Packet, dts, pts uint32) []byte {
-	var videoDataPayload []byte
+// func (proc *flvMuxerProcessor) muxVideoPacket(packet *Packet, dts, pts uint32) []byte {
+// 	var videoDataPayload []byte
 
-	if packet.Payload[0]&31 == 7 {
-		muxer.SPS = packet.Payload
-	}
-	if packet.Payload[0]&31 == 8 {
-		muxer.PPS = packet.Payload
-	}
+// 	if packet.Payload[0]&31 == 7 {
+// 		muxer.SPS = packet.Payload
+// 	}
+// 	if packet.Payload[0]&31 == 8 {
+// 		muxer.PPS = packet.Payload
+// 	}
 
-	if packet.Payload[0]&31 == 7 || packet.Payload[0]&31 == 8 {
-		if muxer.SPS != nil && muxer.PPS != nil && muxer.SPSSent == false {
-			record := &AVCDecoderConfigurationRecord{
-				ConfigurationVersion: 1,
-				AVCProfileIndication: muxer.SPS[1],
-				ProfileCompatibility: muxer.SPS[2],
-				AVCLevelIndication:   muxer.SPS[3],
-				SPS:                  muxer.SPS,
-				PPS:                  muxer.PPS,
-			}
+// 	if packet.Payload[0]&31 == 7 || packet.Payload[0]&31 == 8 {
+// 		if muxer.SPS != nil && muxer.PPS != nil && muxer.SPSSent == false {
+// 			metaDataPayload := marshalMetaData(&MetaData{
+// 				FrameRate:    25,
+// 				HasVideo:     true,
+// 				VideoCodecID: CODEC_AVC,
+// 			})
+// 			flvTag := &FlvTag{
+// 				TagType:   TAG_SCRIPT,
+// 				DataSize:  uint32(len(metaDataPayload)),
+// 				Timestamp: 0,
+// 				Data:      metaDataPayload,
+// 			}
+// 			muxer.nextProcess(flvTag)
 
-			videoData := &VideoData{
-				FrameType:       FRAME_TYPE_KEY,
-				CodecID:         CODEC_AVC,
-				AVCPacketType:   AVC_SEQ_HEADER,
-				CompositionTime: int32(pts - dts),
-				Data:            marshalAVCDecoderConfigurationRecord(record),
-			}
-			videoDataPayload = marshalVideoData(videoData)
-			// fmt.Println("SPS & PPS")
-			muxer.SPSSent = true
-		} else {
-			return nil
-		}
-	} else {
-		videoData := &VideoData{
-			FrameType:       FRAME_TYPE_INTER,
-			CodecID:         CODEC_AVC,
-			AVCPacketType:   AVC_NALU,
-			CompositionTime: int32(pts - dts),
-			Data:            packet.Payload,
-		}
-		// fmt.Println(packet.Payload[0] & 31)
-		if packet.Payload[0]&31 == 5 {
-			// fmt.Println("Key!")
-			videoData.FrameType = FRAME_TYPE_KEY
-		}
-		videoDataPayload = marshalVideoData(videoData)
-	}
+// 			record := &AVCDecoderConfigurationRecord{CanSeekToEnd
+// 				ConfigurationVersion: 1,
+// 				AVCProfileIndication: muxer.SPS[1],
+// 				ProfileCompatibility: muxer.SPS[2],
+// 				AVCLevelIndication:   muxer.SPS[3],
+// 				SPS:                  muxer.SPS,
+// 				PPS:                  muxer.PPS,
+// 			}
 
-	return videoDataPayload
-}
+// 			videoData := &VideoData{
+// 				FrameType:       FRAME_TYPE_KEY,
+// 				CodecID:         CODEC_AVC,
+// 				AVCPacketType:   AVC_SEQ_HEADER,
+// 				CompositionTime: int32(pts - dts),
+// 				Data:            marshalAVCDecoderConfigurationRecord(record),
+// 			}
+// 			videoDataPayload = marshalVideoData(videoData)
+// 			// fmt.Println("SPS & PPS")
+// 			muxer.SPSSent = true
+// 		} else {
+// 			return nil
+// 		}
+// 	}
+
+// 	if proc. {
+// 		videoData := &VideoData{
+// 			FrameType:       FRAME_TYPE_INTER,
+// 			CodecID:         CODEC_AVC,
+// 			AVCPacketType:   AVC_NALU,
+// 			CompositionTime: int32(pts - dts),
+// 			Data:            packet.Payload,
+// 		}
+// 		// fmt.Println(packet.Payload[0] & 31)
+// 		if packet.Payload[0]&31 == 5 {
+// 			// fmt.Println("Key!")
+// 			videoData.FrameType = FRAME_TYPE_KEY
+// 		}
+// 		videoDataPayload = marshalVideoData(videoData)
+// 	}
+
+// 	return videoDataPayload
+// }
 
 func (muxer *flvMuxerProcessor) muxAudioPacket(packet *Packet, dts, pts uint32) []byte {
 	var audioDataPayload []byte
@@ -187,6 +274,23 @@ type AudioData struct {
 	Data          []byte
 }
 
+type MetaData struct {
+	// HasVideo      bool
+	Width         uint32
+	Height        uint32
+	FrameRate     uint32
+	VideoDataRate uint32
+	VideoCodecID  uint8
+	CanSeekToEnd  bool
+
+	HasAudio        bool
+	AudioSampleRate uint32
+	AudioSampleSize uint32
+	AudioChannels   uint32
+	AudioSpecCfg    uint8
+	AudioSpecCfgLen uint32
+}
+
 const (
 	FRAME_TYPE_KEY        = 1
 	FRAME_TYPE_INTER      = 2
@@ -235,7 +339,7 @@ const (
 )
 
 func marshalVideoData(videoData *VideoData) []byte {
-	writer := bytes.NewBuffer([]byte{})
+	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 
 	binary.Write(writer, binary.BigEndian, (videoData.FrameType<<4)|videoData.CodecID)
 	binary.Write(writer, binary.BigEndian, int32(0)|(int32(videoData.AVCPacketType)<<24)|videoData.CompositionTime)
@@ -248,7 +352,7 @@ func marshalVideoData(videoData *VideoData) []byte {
 }
 
 func marshalFlvTag(flvTag *FlvTag) []byte {
-	writer := bytes.NewBuffer([]byte{})
+	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 
 	binary.Write(writer, binary.BigEndian, uint32(0)|(uint32(flvTag.TagType)<<24)|flvTag.DataSize)
 	binary.Write(writer, binary.BigEndian, flvTag.Timestamp<<8)
@@ -259,7 +363,7 @@ func marshalFlvTag(flvTag *FlvTag) []byte {
 }
 
 func marshalAVCDecoderConfigurationRecord(record *AVCDecoderConfigurationRecord) []byte {
-	writer := bytes.NewBuffer([]byte{})
+	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 
 	binary.Write(writer, binary.BigEndian, record.ConfigurationVersion)
 	binary.Write(writer, binary.BigEndian, record.AVCProfileIndication)
@@ -277,11 +381,37 @@ func marshalAVCDecoderConfigurationRecord(record *AVCDecoderConfigurationRecord)
 }
 
 func marshalAudioData(audioData *AudioData) []byte {
-	writer := bytes.NewBuffer([]byte{})
+	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 
 	binary.Write(writer, binary.BigEndian, uint8(0)|(audioData.SoundFormat<<4)|(audioData.SoundRate<<2)|(audioData.SoundSize<<1)|(audioData.SoundType))
 	binary.Write(writer, binary.BigEndian, audioData.AACPacketType)
 	writer.Write(audioData.Data)
+
+	return writer.Bytes()
+}
+
+func marshalMetaData(metaData *MetaData) []byte {
+	writer := bytes.NewBuffer(make([]byte, 0, 1024))
+
+	amf.WriteString(writer, "@setDataFrame")
+	amf.WriteString(writer, "onMetaData")
+
+	obj := amf.Object{
+		"copyright": "baubles",
+		// "hasVideo":     metaData.HasVideo,
+		"hasAudio":     metaData.HasAudio,
+		"canSeekToEnd": metaData.CanSeekToEnd,
+		"framerate":    metaData.FrameRate,
+		"videocodecid": metaData.VideoCodecID,
+	}
+	if metaData.Width > 0 {
+		obj["width"] = metaData.Width
+	}
+	if metaData.Height > 0 {
+		obj["height"] = metaData.Height
+	}
+
+	amf.WriteObject(writer, obj)
 
 	return writer.Bytes()
 }
