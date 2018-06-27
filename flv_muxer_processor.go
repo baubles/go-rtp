@@ -3,6 +3,8 @@ package rtp
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"math"
 	"sync"
 
 	amf "github.com/zhangpeihao/goamf"
@@ -66,8 +68,8 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 		proc.lastTimestamp = packet.Timestamp
 	}()
 
-	dts := uint32((packet.Timestamp-proc.firstTimestamp)/90) + 1000
-	pts := dts + 500
+	dts := uint32((packet.Timestamp - proc.firstTimestamp) / 90)
+	pts := dts + 10
 
 	var videoDataPayload []byte
 
@@ -82,11 +84,21 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 
 	if nalt == 7 || nalt == 8 {
 		if proc.SPS != nil && proc.PPS != nil && proc.SPSSent == false && proc.deltaTimestamp > 0 {
+			sps := unmarshalH264SPS(proc.SPS)
+			if sps == nil {
+				return nil
+			}
+
 			metaData := &MetaData{
-				FrameRate: 90000 / proc.deltaTimestamp,
-				// HasVideo:     true,
+				FrameRate:    90000 / proc.deltaTimestamp,
+				HasVideo:     true,
+				Height:       (sps.PicHeightInMapUnitsMinus1 + 1) * 16,
+				Width:        (sps.PicWidthInMbsMinus1 + 1) * 16,
 				VideoCodecID: CODEC_AVC,
 			}
+
+			fmt.Println("metadata", metaData)
+
 			metaDataPayload := marshalMetaData(metaData)
 			flvTag := &FlvTag{
 				TagType:   TAG_SCRIPT,
@@ -149,74 +161,6 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 	return proc.nextProcess(flvTag)
 }
 
-// func (proc *flvMuxerProcessor) muxVideoPacket(packet *Packet, dts, pts uint32) []byte {
-// 	var videoDataPayload []byte
-
-// 	if packet.Payload[0]&31 == 7 {
-// 		muxer.SPS = packet.Payload
-// 	}
-// 	if packet.Payload[0]&31 == 8 {
-// 		muxer.PPS = packet.Payload
-// 	}
-
-// 	if packet.Payload[0]&31 == 7 || packet.Payload[0]&31 == 8 {
-// 		if muxer.SPS != nil && muxer.PPS != nil && muxer.SPSSent == false {
-// 			metaDataPayload := marshalMetaData(&MetaData{
-// 				FrameRate:    25,
-// 				HasVideo:     true,
-// 				VideoCodecID: CODEC_AVC,
-// 			})
-// 			flvTag := &FlvTag{
-// 				TagType:   TAG_SCRIPT,
-// 				DataSize:  uint32(len(metaDataPayload)),
-// 				Timestamp: 0,
-// 				Data:      metaDataPayload,
-// 			}
-// 			muxer.nextProcess(flvTag)
-
-// 			record := &AVCDecoderConfigurationRecord{CanSeekToEnd
-// 				ConfigurationVersion: 1,
-// 				AVCProfileIndication: muxer.SPS[1],
-// 				ProfileCompatibility: muxer.SPS[2],
-// 				AVCLevelIndication:   muxer.SPS[3],
-// 				SPS:                  muxer.SPS,
-// 				PPS:                  muxer.PPS,
-// 			}
-
-// 			videoData := &VideoData{
-// 				FrameType:       FRAME_TYPE_KEY,
-// 				CodecID:         CODEC_AVC,
-// 				AVCPacketType:   AVC_SEQ_HEADER,
-// 				CompositionTime: int32(pts - dts),
-// 				Data:            marshalAVCDecoderConfigurationRecord(record),
-// 			}
-// 			videoDataPayload = marshalVideoData(videoData)
-// 			// fmt.Println("SPS & PPS")
-// 			muxer.SPSSent = true
-// 		} else {
-// 			return nil
-// 		}
-// 	}
-
-// 	if proc. {
-// 		videoData := &VideoData{
-// 			FrameType:       FRAME_TYPE_INTER,
-// 			CodecID:         CODEC_AVC,
-// 			AVCPacketType:   AVC_NALU,
-// 			CompositionTime: int32(pts - dts),
-// 			Data:            packet.Payload,
-// 		}
-// 		// fmt.Println(packet.Payload[0] & 31)
-// 		if packet.Payload[0]&31 == 5 {
-// 			// fmt.Println("Key!")
-// 			videoData.FrameType = FRAME_TYPE_KEY
-// 		}
-// 		videoDataPayload = marshalVideoData(videoData)
-// 	}
-
-// 	return videoDataPayload
-// }
-
 func (muxer *flvMuxerProcessor) muxAudioPacket(packet *Packet, dts, pts uint32) []byte {
 	var audioDataPayload []byte
 
@@ -275,7 +219,7 @@ type AudioData struct {
 }
 
 type MetaData struct {
-	// HasVideo      bool
+	HasVideo      bool
 	Width         uint32
 	Height        uint32
 	FrameRate     uint32
@@ -397,8 +341,8 @@ func marshalMetaData(metaData *MetaData) []byte {
 	amf.WriteString(writer, "onMetaData")
 
 	obj := amf.Object{
-		"copyright": "baubles",
-		// "hasVideo":     metaData.HasVideo,
+		"copyright":    "baubles",
+		"hasVideo":     metaData.HasVideo,
 		"hasAudio":     metaData.HasAudio,
 		"canSeekToEnd": metaData.CanSeekToEnd,
 		"framerate":    metaData.FrameRate,
@@ -414,4 +358,143 @@ func marshalMetaData(metaData *MetaData) []byte {
 	amf.WriteObject(writer, obj)
 
 	return writer.Bytes()
+}
+
+func ue(data []byte, startBit *uint32) uint32 {
+	zeroNum := uint32(0)
+	for *startBit < uint32(len(data))*8 {
+		if data[*startBit/8]&(0x80>>(*startBit%8)) != 0 {
+			break
+		}
+		zeroNum++
+		*startBit++
+	}
+	*startBit++
+
+	val := uint32(0)
+
+	for i := uint32(0); i < zeroNum; i++ {
+		val <<= 1
+		if data[*startBit/8]&(0x88>>(*startBit%8)) != 0 {
+			val++
+		}
+		*startBit++
+	}
+	return (1 << zeroNum) - 1 + val
+}
+
+func se(data []byte, startBit *uint32) int32 {
+	ueval := ue(data, startBit)
+	val := math.Ceil(float64(ueval) / 2)
+	if ueval%2 == 0 {
+		val = -val
+	}
+	return int32(val)
+}
+
+func u(bitCount uint32, data []byte, startBit *uint32) uint32 {
+	val := uint32(0)
+	for i := uint32(0); i < bitCount; i++ {
+		val <<= 1
+		if data[*startBit/8]&(0x80>>(*startBit%8)) != 0 {
+			val++
+		}
+		*startBit++
+	}
+	return val
+}
+
+type SPS struct {
+	ForbiddenZeroBit                uint32
+	NalRefIdc                       uint32
+	NalUnitType                     uint32
+	ProfileIdc                      uint32
+	ConstraintSet0Flag              uint32
+	ConstraintSet1Flag              uint32
+	ConstraintSet2Flag              uint32
+	ConstraintSet3Flag              uint32
+	ReservedZero4Bits               uint32
+	LevelIdc                        uint32
+	SeqParameterSetID               uint32
+	ChromaFormatIdc                 uint32
+	ResidualColourTransformFlag     uint32
+	BitDepthLumaMinus8              uint32
+	BitDepthChromaMinus8            uint32
+	QpprimeYZeroTransformBypassFlag uint32
+	SeqScalingMatrixPresentFlag     uint32
+	SeqScalingListPresentFlag       []uint32
+	Log2MaxFrameNumMinus4           uint32
+	PicOrderCntType                 uint32
+	Log2MaxPicOrderCntLsbMinus4     uint32
+	DeltaPicOrderAlwaysZeroFlag     uint32
+	OffsetForNonRefPic              int32
+	OffsetForTopToBottomField       int32
+	NumRefFramesInPicOrderCntCycle  uint32
+	OffsetForRefFrame               []int32
+	NumRefFrames                    uint32
+	GapsInFrameNumValueAllowedFlag  uint32
+	PicWidthInMbsMinus1             uint32
+	PicHeightInMapUnitsMinus1       uint32
+}
+
+func unmarshalH264SPS(data []byte) *SPS {
+	start := uint32(0)
+	startBit := &start
+	sps := new(SPS)
+	sps.ForbiddenZeroBit = u(1, data, startBit)
+	sps.NalRefIdc = u(2, data, startBit)
+	sps.NalUnitType = u(5, data, startBit)
+	fmt.Println(sps, *startBit)
+	if sps.NalUnitType == 7 {
+		sps.ProfileIdc = u(8, data, startBit)
+		sps.ConstraintSet0Flag = u(1, data, startBit) //(buf[1] & 0x80)>>7;
+		sps.ConstraintSet1Flag = u(1, data, startBit) //(buf[1] & 0x40)>>6;
+		sps.ConstraintSet2Flag = u(1, data, startBit) //(buf[1] & 0x20)>>5;
+		sps.ConstraintSet3Flag = u(1, data, startBit) //(buf[1] & 0x10)>>4;
+		sps.ReservedZero4Bits = u(4, data, startBit)
+		sps.LevelIdc = u(8, data, startBit)
+		sps.SeqParameterSetID = ue(data, startBit)
+
+		if sps.ProfileIdc == 100 || sps.ProfileIdc == 110 || sps.ProfileIdc == 122 || sps.ProfileIdc == 144 {
+			sps.ChromaFormatIdc = ue(data, startBit)
+			if sps.ChromaFormatIdc == 3 {
+				sps.ResidualColourTransformFlag = u(1, data, startBit)
+			}
+
+			sps.BitDepthLumaMinus8 = ue(data, startBit)
+			sps.BitDepthChromaMinus8 = ue(data, startBit)
+			sps.QpprimeYZeroTransformBypassFlag = u(1, data, startBit)
+			sps.SeqScalingMatrixPresentFlag = u(1, data, startBit)
+
+			sps.SeqScalingListPresentFlag = make([]uint32, 8)
+			if sps.SeqScalingMatrixPresentFlag != 0 {
+				for i := 0; i < 8; i++ {
+					sps.SeqScalingListPresentFlag[i] = u(1, data, startBit)
+				}
+			}
+		}
+		sps.Log2MaxFrameNumMinus4 = ue(data, startBit)
+		sps.PicOrderCntType = ue(data, startBit)
+		if sps.PicOrderCntType == 0 {
+			sps.Log2MaxPicOrderCntLsbMinus4 = ue(data, startBit)
+		} else if sps.PicOrderCntType == 1 {
+			sps.DeltaPicOrderAlwaysZeroFlag = u(1, data, startBit)
+			sps.OffsetForNonRefPic = se(data, startBit)
+			sps.OffsetForTopToBottomField = se(data, startBit)
+			sps.NumRefFramesInPicOrderCntCycle = ue(data, startBit)
+
+			sps.OffsetForRefFrame = make([]int32, int(sps.NumRefFramesInPicOrderCntCycle))
+			for i := 0; i < int(sps.NumRefFramesInPicOrderCntCycle); i++ {
+				sps.OffsetForRefFrame[i] = se(data, startBit)
+			}
+		}
+		sps.NumRefFrames = ue(data, startBit)
+		sps.GapsInFrameNumValueAllowedFlag = u(1, data, startBit)
+		sps.PicWidthInMbsMinus1 = ue(data, startBit)
+		sps.PicHeightInMapUnitsMinus1 = ue(data, startBit)
+
+		return sps
+	}
+
+	return nil
 }
