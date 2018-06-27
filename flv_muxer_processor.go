@@ -3,7 +3,6 @@ package rtp
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"sync"
 
@@ -96,8 +95,6 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 				Width:        (sps.PicWidthInMbsMinus1 + 1) * 16,
 				VideoCodecID: CODEC_AVC,
 			}
-
-			fmt.Println("metadata", metaData)
 
 			metaDataPayload := marshalMetaData(metaData)
 			flvTag := &FlvTag{
@@ -444,7 +441,6 @@ func unmarshalH264SPS(data []byte) *SPS {
 	sps.ForbiddenZeroBit = u(1, data, startBit)
 	sps.NalRefIdc = u(2, data, startBit)
 	sps.NalUnitType = u(5, data, startBit)
-	fmt.Println(sps, *startBit)
 	if sps.NalUnitType == 7 {
 		sps.ProfileIdc = u(8, data, startBit)
 		sps.ConstraintSet0Flag = u(1, data, startBit) //(buf[1] & 0x80)>>7;
