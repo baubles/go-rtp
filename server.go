@@ -99,7 +99,7 @@ func (srv *Server) loopHandleRead() {
 			sess = val.(*Session)
 			sess.lastActiveTime = time.Now().UnixNano()
 		} else {
-			sess = newSession(pkt.SSRC, raddr)
+			sess = newSession(pkt.SSRC, raddr, srv)
 			srv.sessions.Store(pkt.SSRC, sess)
 			select {
 			case srv.accept <- sess:

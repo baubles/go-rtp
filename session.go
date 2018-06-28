@@ -16,9 +16,10 @@ type Session struct {
 	errch              chan error
 	lastSequenceNumber uint16
 	attach             chan Processor
+	srv                *Server
 }
 
-func newSession(ssrc uint32, addr net.Addr) *Session {
+func newSession(ssrc uint32, addr net.Addr, srv *Server) *Session {
 	sess := &Session{
 		ssrc:    ssrc,
 		addr:    addr,
@@ -26,6 +27,7 @@ func newSession(ssrc uint32, addr net.Addr) *Session {
 		errch:   make(chan error, 1),
 		receive: make(chan *Packet, 100),
 		attach:  make(chan Processor, 1),
+		srv:     srv,
 	}
 	return sess
 }
@@ -108,4 +110,9 @@ func (sess *Session) Wait() error {
 		return err
 	}
 
+}
+
+func (sess *Session) Close() {
+	sess.close()
+	sess.srv.sessions.Delete(sess.ssrc)
 }

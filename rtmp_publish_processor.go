@@ -22,6 +22,7 @@ func NewRTMPPublishProcessor(url, name string) (p Processor, err error) {
 	handler := &rtmpSinkHandler{}
 	handler.createStreamChan = make(chan rtmp.OutboundStream)
 	handler.startPublishChan = make(chan rtmp.OutboundStream)
+	proc.handler = handler
 
 	proc.obConn, err = rtmp.Dial(url, handler, 100)
 	if err != nil {
@@ -48,6 +49,9 @@ func (proc *rtmpPublishProcessor) Process(packet interface{}) error {
 	flvTag, ok := packet.(*FlvTag)
 	if !ok {
 		return fmt.Errorf("rtmpPublishProcessor process pkt is not *FlvTag")
+	}
+	if proc.handler.closed {
+		return fmt.Errorf("rtmp closed")
 	}
 
 	// switch flvTag.TagType {
@@ -104,17 +108,19 @@ type rtmpSinkHandler struct {
 	videoDataSize    int64
 	audioDataSize    int64
 	startPublish     bool
+	closed           bool
 }
 
 func (handler *rtmpSinkHandler) OnStatus(conn rtmp.OutboundConn) {
 	var err error
 	handler.status, err = conn.Status()
 	if err != nil {
-		logger.Printf("rtmp status: %d, err: %v\n", handler.status, err)
+		// logger.Printf("rtmp status: %d, err: %v\n", handler.status, err)
 	}
 }
 
 func (handler *rtmpSinkHandler) OnClosed(conn rtmp.Conn) {
+	handler.closed = true
 	// logger.Printf("rtmp closed\n")
 }
 
