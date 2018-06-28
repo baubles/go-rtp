@@ -74,40 +74,18 @@ func (proc *psUnpackProcessor) Process(packet interface{}) error {
 		if err != nil {
 			log.Println("process unpack ps packet err:", err)
 		}
-		if len(h264) > 0 {
-			start := 0
-			for i := start; i < len(h264)-3; i++ {
-				if h264[i] == uint8(0) && h264[i+1] == uint8(0) && h264[i+2] == uint8(0) && h264[i+3] == uint8(1) {
-					start = i + 4
-					break
-				}
+
+		splits := bytes.Split(h264, []byte{0x00, 0x00, 0x00, 0x01})
+		for _, split := range splits {
+			if len(split) == 0 {
+				continue
 			}
-
-			for {
-				end := len(h264)
-				for i := start; i < len(h264)-3; i++ {
-					if h264[i] == uint8(0) && h264[i+1] == uint8(0) && h264[i+2] == uint8(0) && h264[i+3] == uint8(1) {
-						end = i
-						break
-					}
-				}
-
-				if start < end {
-					pkt.Payload = h264[start:end]
-					if err = proc.nextProcess(pkt); err != nil {
-						return err
-					}
-				}
-
-				if end >= len(h264)-4 {
-					break
-				}
-				start = end + 4
+			pkt.Payload = split
+			if err = proc.nextProcess(pkt); err != nil {
+				return err
 			}
-			return nil
-			// pkt.Payload = h264
-			// return proc.nextProcess(pkt)
 		}
+		return nil
 	}
 	return nil
 }
