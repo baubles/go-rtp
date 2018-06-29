@@ -172,7 +172,7 @@ func (proc *psUnpackProcessor) h264(buf []byte) (h264buf []byte, err error) {
 			}
 			next = next[offset:]
 		} else {
-			err = fmt.Errorf("ps packet invalid, first main frame: %t start code: %x %x %x %x", proc.firstMainFrame, next[0], next[1], next[2], next[3])
+			// err = fmt.Errorf("ps packet invalid, first main frame: %t start code: %x %x %x %x", proc.firstMainFrame, next[0], next[1], next[2], next[3])
 			break
 		}
 	}
