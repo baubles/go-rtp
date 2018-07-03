@@ -21,19 +21,15 @@ func NewH264UnpackProcessor() Processor {
 }
 
 func (proc *h264UnpackProcessor) Attach(next Processor) {
-	proc.mux.Lock()
 	old := proc.next
 	proc.next = next
-	proc.mux.Unlock()
 	if old != nil {
 		old.Release()
 	}
 }
 
 func (proc *h264UnpackProcessor) Release() {
-	proc.mux.Lock()
 	next := proc.next
-	proc.mux.Unlock()
 	if next != nil {
 		next.Release()
 	}
@@ -79,9 +75,7 @@ func (proc *h264UnpackProcessor) Process(packet interface{}) error {
 }
 
 func (proc *h264UnpackProcessor) nextProcess(pkt interface{}) error {
-	proc.mux.Lock()
 	next := proc.next
-	proc.mux.Unlock()
 	if next != nil {
 		return next.Process(pkt)
 	}

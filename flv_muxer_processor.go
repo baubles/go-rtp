@@ -26,26 +26,20 @@ func NewFlvMuxerProcessor() Processor {
 }
 
 func (proc *flvMuxerProcessor) Attach(next Processor) {
-	proc.mux.Lock()
 	old := proc.next
 	proc.next = next
-	proc.mux.Unlock()
 	if old != nil {
 		old.Release()
 	}
 }
 
 func (proc *flvMuxerProcessor) Release() {
-	proc.mux.Lock()
 	next := proc.next
-	proc.mux.Unlock()
 	next.Release()
 }
 
 func (proc *flvMuxerProcessor) nextProcess(pkt interface{}) error {
-	proc.mux.Lock()
 	next := proc.next
-	proc.mux.Unlock()
 	if next != nil {
 		return next.Process(pkt)
 	}

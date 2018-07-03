@@ -32,19 +32,15 @@ func NewPSUnpackProcessor() Processor {
 }
 
 func (proc *psUnpackProcessor) Attach(next Processor) {
-	proc.mux.Lock()
 	old := proc.next
 	proc.next = next
-	proc.mux.Unlock()
 	if old != nil {
 		old.Release()
 	}
 }
 
 func (proc *psUnpackProcessor) Release() {
-	proc.mux.Lock()
 	next := proc.next
-	proc.mux.Unlock()
 	if next != nil {
 		next.Release()
 	}
@@ -91,9 +87,7 @@ func (proc *psUnpackProcessor) Process(packet interface{}) error {
 }
 
 func (proc *psUnpackProcessor) nextProcess(pkt interface{}) error {
-	proc.mux.Lock()
 	next := proc.next
-	proc.mux.Unlock()
 	if next != nil {
 		return next.Process(pkt)
 	}

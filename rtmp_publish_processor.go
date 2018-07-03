@@ -71,19 +71,15 @@ func (proc *rtmpPublishProcessor) Process(packet interface{}) error {
 }
 
 func (proc *rtmpPublishProcessor) Attach(next Processor) {
-	proc.mux.Lock()
 	old := proc.next
 	proc.next = next
-	proc.mux.Unlock()
 	if old != nil {
 		old.Release()
 	}
 }
 
 func (proc *rtmpPublishProcessor) Release() {
-	proc.mux.Lock()
 	next := proc.next
-	proc.mux.Unlock()
 	if next != nil {
 		next.Release()
 	}
@@ -92,9 +88,7 @@ func (proc *rtmpPublishProcessor) Release() {
 func (proc *rtmpPublishProcessor) nextProcess(pkt interface{}) {
 	proc.stream.Close()
 	proc.obConn.Close()
-	proc.mux.Lock()
 	next := proc.next
-	proc.mux.Unlock()
 	if next != nil {
 		next.Process(pkt)
 	}
