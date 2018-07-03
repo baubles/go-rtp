@@ -120,7 +120,7 @@ func (srv *Server) loopHandleRead() {
 		select {
 		case sess.receive <- pkt:
 		default:
-			// logger.Println("pkt can't be receive, will be drop")
+			logger.Printf("pkt can't be receive, will be drop. ssrs=%v seq=%v\n", pkt.SSRC, pkt.SequenceNumber)
 		}
 	}
 

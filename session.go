@@ -3,6 +3,7 @@ package rtp
 import (
 	"net"
 	"sync"
+	"time"
 )
 
 type Session struct {
@@ -66,11 +67,21 @@ func (sess *Session) process() error {
 	case <-sess.closed:
 		return nil
 	}
+	lastPrintTime := time.Now().Unix()
+	lost := uint16(0)
+	duration := int64(60)
 	for {
 		select {
 		case pkt := <-sess.receive:
-			if pkt.SequenceNumber-sess.lastSequenceNumber > 1 {
-				logger.Printf("session loss %d packets, SequenceNumber lastest : %d, current is %d\n", pkt.SequenceNumber-sess.lastSequenceNumber-1, sess.lastSequenceNumber, pkt.SequenceNumber)
+			now := time.Now().Unix()
+			if pkt.SequenceNumber-sess.lastSequenceNumber > 1 && now-lastPrintTime > 5 {
+				lost = lost + pkt.SequenceNumber - sess.lastSequenceNumber
+			}
+
+			if now-lastPrintTime > duration && lost > 0 {
+				logger.Printf("session ssrc=%d, loss %d packets in %ds, seq lastest : %d, current is %d\n", pkt.SSRC, pkt.SequenceNumber-sess.lastSequenceNumber-1, duration, sess.lastSequenceNumber, pkt.SequenceNumber)
+				lastPrintTime = now
+				lost = 0
 			}
 
 			if sess.processor != nil {
