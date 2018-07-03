@@ -113,7 +113,7 @@ func (srv *Server) loopHandleRead() {
 			default:
 				srv.sessions.Delete(pkt.SSRC)
 				logger.Println("session can't be accepted, will be drop")
-				continue
+				goto NEXT
 			}
 		}
 
@@ -122,6 +122,7 @@ func (srv *Server) loopHandleRead() {
 		default:
 			logger.Printf("pkt can't be receive, will be drop. ssrs=%v seq=%v\n", pkt.SSRC, pkt.SequenceNumber)
 		}
+	NEXT:
 	}
 
 	srv.sessions.Range(func(key interface{}, val interface{}) bool {
