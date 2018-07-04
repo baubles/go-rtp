@@ -79,7 +79,7 @@ func (sess *Session) process() error {
 			}
 
 			if now-lastPrintTime > duration && lost > 0 {
-				logger.Printf("session ssrc=%d, loss %d packets in %ds, seq lastest : %d, current is %d\n", pkt.SSRC, pkt.SequenceNumber-sess.lastSequenceNumber-1, duration, sess.lastSequenceNumber, pkt.SequenceNumber)
+				logger.Printf("session ssrc=%d, loss %d packets in %ds, seq lastest: %d, current: %d\n", pkt.SSRC, lost, duration, sess.lastSequenceNumber, pkt.SequenceNumber)
 				lastPrintTime = now
 				lost = 0
 			}
