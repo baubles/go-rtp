@@ -105,9 +105,10 @@ func (srv *Server) loopHandleRead() {
 			case srv.accept <- sess:
 				async(&srv.wg, func() {
 					err := sess.process()
+					sess.close()
+					srv.sessions.Delete(sess.ssrc)
 					if err != nil {
-						sess.close()
-						srv.sessions.Delete(sess.ssrc)
+						logger.Printf("process session ssrc=%v, err=%v\n", sess.ssrc, err)
 					}
 				})
 			default:
