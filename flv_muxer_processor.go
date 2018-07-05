@@ -3,6 +3,7 @@ package rtp
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"math"
 	"sync"
 
@@ -10,17 +11,26 @@ import (
 )
 
 type flvMuxerProcessor struct {
-	SPS, PPS       []byte
-	SPSSent        bool
-	firstTimestamp uint32
-	next           Processor
-	mux            sync.Mutex
-	lastTimestamp  uint32
-	deltaTimestamp uint32
+	SPS, PPS                      []byte
+	SPSSent                       bool
+	firstTimestamp                uint32
+	next                          Processor
+	mux                           sync.Mutex
+	lastTimestamp                 uint32
+	deltaTimestamp                uint32
+	videoData                     *bytes.Buffer
+	audioData                     *bytes.Buffer
+	avcDecoderConfigurationRecord *bytes.Buffer
+	metaData                      *bytes.Buffer
 }
 
 func NewFlvMuxerProcessor() Processor {
-	proc := &flvMuxerProcessor{}
+	proc := &flvMuxerProcessor{
+		videoData:                     new(bytes.Buffer),
+		audioData:                     new(bytes.Buffer),
+		avcDecoderConfigurationRecord: new(bytes.Buffer),
+		metaData:                      new(bytes.Buffer),
+	}
 
 	return proc
 }
@@ -74,7 +84,6 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 	case 8:
 		proc.PPS = packet.Payload
 	}
-
 	if nalt == 7 || nalt == 8 {
 		if proc.SPS != nil && proc.PPS != nil && proc.SPSSent == false && proc.deltaTimestamp > 0 {
 			sps := unmarshalH264SPS(proc.SPS)
@@ -89,8 +98,9 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 				Width:        (sps.PicWidthInMbsMinus1 + 1) * 16,
 				VideoCodecID: CODEC_AVC,
 			}
-
-			metaDataPayload := marshalMetaData(metaData)
+			proc.metaData.Reset()
+			metaData.WriteTo(proc.metaData)
+			metaDataPayload := proc.metaData.Bytes()
 			flvTag := &FlvTag{
 				TagType:   TAG_SCRIPT,
 				DataSize:  uint32(len(metaDataPayload)),
@@ -110,15 +120,18 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 				SPS:                  proc.SPS,
 				PPS:                  proc.PPS,
 			}
-
+			proc.avcDecoderConfigurationRecord.Reset()
+			record.WriteTo(proc.avcDecoderConfigurationRecord)
 			videoData := &VideoData{
 				FrameType:       FRAME_TYPE_KEY,
 				CodecID:         CODEC_AVC,
 				AVCPacketType:   AVC_SEQ_HEADER,
 				CompositionTime: int32(pts - dts),
-				Data:            marshalAVCDecoderConfigurationRecord(record),
+				Data:            proc.avcDecoderConfigurationRecord.Bytes(),
 			}
-			videoDataPayload = marshalVideoData(videoData)
+			proc.videoData.Reset()
+			videoData.WriteTo(proc.videoData)
+			videoDataPayload = proc.videoData.Bytes()
 			proc.SPSSent = true
 		} else {
 			return nil
@@ -135,7 +148,9 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 		if nalt == 5 {
 			videoData.FrameType = FRAME_TYPE_KEY
 		}
-		videoDataPayload = marshalVideoData(videoData)
+		proc.videoData.Reset()
+		videoData.WriteTo(proc.videoData)
+		videoDataPayload = proc.videoData.Bytes()
 	}
 
 	if videoDataPayload == nil {
@@ -152,7 +167,7 @@ func (proc *flvMuxerProcessor) Process(pkt interface{}) error {
 	return proc.nextProcess(flvTag)
 }
 
-func (muxer *flvMuxerProcessor) muxAudioPacket(packet *Packet, dts, pts uint32) []byte {
+func (proc *flvMuxerProcessor) muxAudioPacket(packet *Packet, dts, pts uint32) []byte {
 	var audioDataPayload []byte
 
 	audioData := &AudioData{
@@ -163,7 +178,10 @@ func (muxer *flvMuxerProcessor) muxAudioPacket(packet *Packet, dts, pts uint32) 
 		AACPacketType: AAC_RAW,
 		Data:          packet.Payload,
 	}
-	audioDataPayload = marshalAudioData(audioData)
+
+	proc.audioData.Reset()
+	audioData.WriteTo(proc.audioData)
+	audioDataPayload = proc.audioData.Bytes()
 
 	return audioDataPayload
 }
@@ -175,6 +193,20 @@ type FlvTag struct {
 	DataSize  uint32
 	Timestamp uint32
 	Data      []byte
+}
+
+func (flvTag *FlvTag) WriteTo(writer io.Writer) (err error) {
+	if err = binary.Write(writer, binary.BigEndian, uint32(0)|(uint32(flvTag.TagType)<<24)|flvTag.DataSize); err != nil {
+		return err
+	}
+	if err = binary.Write(writer, binary.BigEndian, flvTag.Timestamp<<8); err != nil {
+		return err
+	}
+	if _, err = writer.Write([]byte{0, 0, 0}); err != nil {
+		return err
+	}
+	writer.Write(flvTag.Data)
+	return err
 }
 
 const (
@@ -191,6 +223,22 @@ type VideoData struct {
 	Data            []byte
 }
 
+func (videoData *VideoData) WriteTo(writer io.Writer) (err error) {
+	if err = binary.Write(writer, binary.BigEndian, (videoData.FrameType<<4)|videoData.CodecID); err != nil {
+		return err
+	}
+	if err = binary.Write(writer, binary.BigEndian, int32(0)|(int32(videoData.AVCPacketType)<<24)|videoData.CompositionTime); err != nil {
+		return err
+	}
+	if videoData.AVCPacketType == AVC_NALU {
+		if err = binary.Write(writer, binary.BigEndian, uint32(len(videoData.Data))); err != nil {
+			return err
+		}
+	}
+	_, err = writer.Write(videoData.Data)
+	return err
+}
+
 type AVCDecoderConfigurationRecord struct {
 	ConfigurationVersion uint8
 	AVCProfileIndication uint8
@@ -200,6 +248,41 @@ type AVCDecoderConfigurationRecord struct {
 	PPS                  []byte
 }
 
+func (record *AVCDecoderConfigurationRecord) WriteTo(writer io.Writer) (err error) {
+	if err = binary.Write(writer, binary.BigEndian, record.ConfigurationVersion); err != nil {
+		return err
+	}
+	if err = binary.Write(writer, binary.BigEndian, record.AVCProfileIndication); err != nil {
+		return nil
+	}
+	if err = binary.Write(writer, binary.BigEndian, record.ProfileCompatibility); err != nil {
+		return nil
+	}
+	if err = binary.Write(writer, binary.BigEndian, record.AVCLevelIndication); err != nil {
+		return nil
+	}
+	if err = binary.Write(writer, binary.BigEndian, uint8(0xff)); err != nil {
+		return nil
+	}
+	if err = binary.Write(writer, binary.BigEndian, uint8(0xe1)); err != nil {
+		return nil
+	}
+	if err = binary.Write(writer, binary.BigEndian, uint16(len(record.SPS))); err != nil {
+		return nil
+	}
+	if _, err = writer.Write(record.SPS); err != nil {
+		return nil
+	}
+	if err = binary.Write(writer, binary.BigEndian, uint8(0x01)); err != nil {
+		return nil
+	}
+	if err = binary.Write(writer, binary.BigEndian, uint16(len(record.PPS))); err != nil {
+		return nil
+	}
+	_, err = writer.Write(record.PPS)
+	return err
+}
+
 type AudioData struct {
 	SoundFormat   uint8
 	SoundRate     uint8
@@ -207,6 +290,17 @@ type AudioData struct {
 	SoundType     uint8
 	AACPacketType uint8
 	Data          []byte
+}
+
+func (audioData *AudioData) WriteTo(writer io.Writer) (err error) {
+	if err = binary.Write(writer, binary.BigEndian, uint8(0)|(audioData.SoundFormat<<4)|(audioData.SoundRate<<2)|(audioData.SoundSize<<1)|(audioData.SoundType)); err != nil {
+		return err
+	}
+	if err = binary.Write(writer, binary.BigEndian, audioData.AACPacketType); err != nil {
+		return err
+	}
+	_, err = writer.Write(audioData.Data)
+	return err
 }
 
 type MetaData struct {
@@ -224,6 +318,33 @@ type MetaData struct {
 	AudioChannels   uint32
 	AudioSpecCfg    uint8
 	AudioSpecCfgLen uint32
+}
+
+func (metaData *MetaData) WriteTo(writer amf.Writer) (err error) {
+	if _, err = amf.WriteString(writer, "@setDataFrame"); err != nil {
+		return err
+	}
+	if _, err = amf.WriteString(writer, "onMetaData"); err != nil {
+		return err
+	}
+
+	obj := amf.Object{
+		"copyright":    "baubles",
+		"hasVideo":     metaData.HasVideo,
+		"hasAudio":     metaData.HasAudio,
+		"canSeekToEnd": metaData.CanSeekToEnd,
+		"framerate":    metaData.FrameRate,
+		"videocodecid": metaData.VideoCodecID,
+	}
+	if metaData.Width > 0 {
+		obj["width"] = metaData.Width
+	}
+	if metaData.Height > 0 {
+		obj["height"] = metaData.Height
+	}
+
+	_, err = amf.WriteObject(writer, obj)
+	return err
 }
 
 const (
@@ -272,84 +393,6 @@ const (
 	AAC_HEADER = 0
 	AAC_RAW    = 1
 )
-
-func marshalVideoData(videoData *VideoData) []byte {
-	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
-
-	binary.Write(writer, binary.BigEndian, (videoData.FrameType<<4)|videoData.CodecID)
-	binary.Write(writer, binary.BigEndian, int32(0)|(int32(videoData.AVCPacketType)<<24)|videoData.CompositionTime)
-	if videoData.AVCPacketType == AVC_NALU {
-		binary.Write(writer, binary.BigEndian, uint32(len(videoData.Data)))
-	}
-	writer.Write(videoData.Data)
-
-	return writer.Bytes()
-}
-
-func marshalFlvTag(flvTag *FlvTag) []byte {
-	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
-
-	binary.Write(writer, binary.BigEndian, uint32(0)|(uint32(flvTag.TagType)<<24)|flvTag.DataSize)
-	binary.Write(writer, binary.BigEndian, flvTag.Timestamp<<8)
-	writer.Write([]byte{0, 0, 0})
-	writer.Write(flvTag.Data)
-
-	return writer.Bytes()
-}
-
-func marshalAVCDecoderConfigurationRecord(record *AVCDecoderConfigurationRecord) []byte {
-	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
-
-	binary.Write(writer, binary.BigEndian, record.ConfigurationVersion)
-	binary.Write(writer, binary.BigEndian, record.AVCProfileIndication)
-	binary.Write(writer, binary.BigEndian, record.ProfileCompatibility)
-	binary.Write(writer, binary.BigEndian, record.AVCLevelIndication)
-	binary.Write(writer, binary.BigEndian, uint8(0xff))
-	binary.Write(writer, binary.BigEndian, uint8(0xe1))
-	binary.Write(writer, binary.BigEndian, uint16(len(record.SPS)))
-	writer.Write(record.SPS)
-	binary.Write(writer, binary.BigEndian, uint8(0x01))
-	binary.Write(writer, binary.BigEndian, uint16(len(record.PPS)))
-	writer.Write(record.PPS)
-
-	return writer.Bytes()
-}
-
-func marshalAudioData(audioData *AudioData) []byte {
-	writer := bytes.NewBuffer(make([]byte, 0, 1024*1024))
-
-	binary.Write(writer, binary.BigEndian, uint8(0)|(audioData.SoundFormat<<4)|(audioData.SoundRate<<2)|(audioData.SoundSize<<1)|(audioData.SoundType))
-	binary.Write(writer, binary.BigEndian, audioData.AACPacketType)
-	writer.Write(audioData.Data)
-
-	return writer.Bytes()
-}
-
-func marshalMetaData(metaData *MetaData) []byte {
-	writer := bytes.NewBuffer(make([]byte, 0, 1024))
-
-	amf.WriteString(writer, "@setDataFrame")
-	amf.WriteString(writer, "onMetaData")
-
-	obj := amf.Object{
-		"copyright":    "baubles",
-		"hasVideo":     metaData.HasVideo,
-		"hasAudio":     metaData.HasAudio,
-		"canSeekToEnd": metaData.CanSeekToEnd,
-		"framerate":    metaData.FrameRate,
-		"videocodecid": metaData.VideoCodecID,
-	}
-	if metaData.Width > 0 {
-		obj["width"] = metaData.Width
-	}
-	if metaData.Height > 0 {
-		obj["height"] = metaData.Height
-	}
-
-	amf.WriteObject(writer, obj)
-
-	return writer.Bytes()
-}
 
 func ue(data []byte, startBit *uint32) uint32 {
 	zeroNum := uint32(0)
