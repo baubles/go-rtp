@@ -105,6 +105,12 @@ func (srv *Server) loopHandleRead() {
 			continue
 		}
 
+		if pkt.Version != 2 {
+			logger.Printf("rtp packet version support 2, receive %d\n", pkt.Version)
+			pkt.release()
+			continue
+		}
+
 		val, ok := srv.sessions.Load(pkt.SSRC)
 		var sess *Session
 		if ok {
