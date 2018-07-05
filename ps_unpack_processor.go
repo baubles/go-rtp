@@ -22,12 +22,14 @@ type psUnpackProcessor struct {
 	mux                sync.Mutex
 	lastSequenceNumber uint16
 	loss               bool
+	h264Buf            *bytes.Buffer
 }
 
 func NewPSUnpackProcessor() Processor {
 	return &psUnpackProcessor{
 		firstMainFrame: false,
 		buf:            bytes.NewBuffer(make([]byte, 0, 1024*1024)),
+		h264Buf:        new(bytes.Buffer),
 	}
 }
 
@@ -94,7 +96,7 @@ func (proc *psUnpackProcessor) nextProcess(pkt interface{}) error {
 	return nil
 }
 
-func (proc *psUnpackProcessor) h264(buf []byte) (h264buf []byte, err error) {
+func (proc *psUnpackProcessor) h264(buf []byte) (h264bytes []byte, err error) {
 	if len(buf) < psHeaderLen {
 		return nil, PackInvalidError
 	}
@@ -107,7 +109,8 @@ func (proc *psUnpackProcessor) h264(buf []byte) (h264buf []byte, err error) {
 		return nil, PackInvalidError
 	}
 	next := buf[offset:]
-	h264 := bytes.NewBuffer(make([]byte, 0, 1024*1024))
+	h264 := proc.h264Buf
+	h264.Reset()
 
 	for len(next) >= psStartCodeLen {
 		if proc.firstMainFrame && next[0] == 0x00 && next[1] == 0x00 && next[2] == 0x01 && next[3] == 0xE0 {
