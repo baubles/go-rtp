@@ -22,6 +22,8 @@ type Server struct {
 	listener *net.UDPConn
 	closed   chan bool
 	state    int8
+
+	pktPool *sync.Pool
 }
 
 const (
@@ -39,6 +41,13 @@ func (srv *Server) Serve() (err error) {
 	listener, err := net.ListenUDP("udp", laddr)
 	if err != nil {
 		return err
+	}
+
+	if srv.pktPool == nil {
+		srv.pktPool = &sync.Pool{}
+		srv.pktPool.New = func() interface{} {
+			return newPacket(srv.pktPool)
+		}
 	}
 
 	srv.mux.Lock()
@@ -81,16 +90,19 @@ func (srv *Server) loopHandleUnactive() {
 }
 
 func (srv *Server) loopHandleRead() {
-	buf := make([]byte, maxUDPPacketSize)
 	for {
+		buf := make([]byte, maxUDPPacketSize)
 		n, raddr, err := srv.listener.ReadFrom(buf)
 		if err != nil {
 			break
 		}
 
-		pkt, err := UnmarshalPacket(buf[:n])
+		pkt := srv.pktPool.Get().(*Packet)
+		err = pkt.unmarshal(buf[:n])
 		if err != nil {
 			logger.Println("rtp packet unmarshal err:", err)
+			pkt.release()
+			continue
 		}
 
 		val, ok := srv.sessions.Load(pkt.SSRC)

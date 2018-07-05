@@ -86,11 +86,14 @@ func (sess *Session) process() error {
 
 			if sess.processor != nil {
 				err := sess.processor.Process(pkt)
+				pkt.release()
 				if err != nil {
 					logger.Println("session process err", err)
 					sess.errch <- err
 					return err
 				}
+			} else {
+				pkt.release()
 			}
 
 			sess.lastSequenceNumber = pkt.SequenceNumber
