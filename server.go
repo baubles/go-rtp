@@ -81,8 +81,8 @@ func (srv *Server) loopHandleUnactive() {
 }
 
 func (srv *Server) loopHandleRead() {
+	buf := make([]byte, maxUDPPacketSize)
 	for {
-		buf := make([]byte, maxUDPPacketSize)
 		n, raddr, err := srv.listener.ReadFrom(buf)
 		if err != nil {
 			break
