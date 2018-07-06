@@ -14,12 +14,14 @@ type rtmpPublishProcessor struct {
 	handler *rtmpSinkHandler
 	obConn  rtmp.OutboundConn
 	stream  rtmp.OutboundStream
+	url     string
+	name    string
 }
 
 func NewRTMPPublishProcessor(url, name string) (p Processor, err error) {
-	proc := &rtmpPublishProcessor{}
+	proc := &rtmpPublishProcessor{url: url, name: name}
 
-	handler := &rtmpSinkHandler{}
+	handler := newrtmpSinkHandler()
 	handler.createStreamChan = make(chan rtmp.OutboundStream)
 	handler.startPublishChan = make(chan rtmp.OutboundStream)
 	proc.handler = handler
@@ -50,22 +52,12 @@ func (proc *rtmpPublishProcessor) Process(packet interface{}) error {
 	if !ok {
 		return fmt.Errorf("rtmpPublishProcessor process pkt is not *FlvTag")
 	}
-	if proc.handler.closed {
+	select {
+	case <-proc.handler.closed:
+		logger.Printf("rtmp closed, rtmp %v, name %v\n", proc.url, proc.name)
 		return fmt.Errorf("rtmp closed")
+	default:
 	}
-
-	// switch flvTag.TagType {
-	// case TAG_VIDEO:
-	// 	return proc.stream.PublishVideoData(flvTag.Data, flvTag.Timestamp)
-	// case TAG_AUDIO:
-	// 	return proc.stream.PublishAudioData(flvTag.Data, flvTag.Timestamp)
-	// case TAG_SCRIPT:
-	// 	return proc.stream.PublishData(flvTag.TagType, flvTag.Data, flvTag.Timestamp)
-	// default:
-	// 	return nil
-	// }
-
-	// fmt.Println("flv type", flvTag.TagType)
 
 	return proc.stream.PublishData(flvTag.TagType, flvTag.Data, flvTag.Timestamp)
 }
@@ -102,19 +94,25 @@ type rtmpSinkHandler struct {
 	videoDataSize    int64
 	audioDataSize    int64
 	startPublish     bool
-	closed           bool
+	closed           chan bool
+}
+
+func newrtmpSinkHandler() *rtmpSinkHandler {
+	return &rtmpSinkHandler{
+		closed: make(chan bool),
+	}
 }
 
 func (handler *rtmpSinkHandler) OnStatus(conn rtmp.OutboundConn) {
 	var err error
 	handler.status, err = conn.Status()
 	if err != nil {
-		// logger.Printf("rtmp status: %d, err: %v\n", handler.status, err)
+		logger.Printf("rtmp status: %d, err: %v\n", handler.status, err)
 	}
 }
 
 func (handler *rtmpSinkHandler) OnClosed(conn rtmp.Conn) {
-	handler.closed = true
+	close(handler.closed)
 	// logger.Printf("rtmp closed\n")
 }
 

@@ -21,6 +21,7 @@ type psUnpackProcessor struct {
 	next               Processor
 	mux                sync.Mutex
 	lastSequenceNumber uint16
+	lastTimestamp      uint32
 	loss               bool
 	h264Buf            *bytes.Buffer
 }
@@ -51,16 +52,44 @@ func (proc *psUnpackProcessor) Release() {
 func (proc *psUnpackProcessor) Process(packet interface{}) error {
 	pkt, _ := packet.(*Packet)
 
-	defer func() { proc.lastSequenceNumber = pkt.SequenceNumber }()
+	defer func() {
+		proc.lastSequenceNumber = pkt.SequenceNumber
+		proc.lastTimestamp = pkt.Timestamp
+	}()
 
 	if pkt.SequenceNumber-proc.lastSequenceNumber > 1 {
 		proc.loss = true
 	}
 
 	if proc.loss {
-		proc.buf.Reset()
+		logger.Printf("ps loss, drop packet ssrc %v, seq %v, timestamp %v, mark %v\n", pkt.SSRC, pkt.SequenceNumber, pkt.Timestamp, pkt.Marker)
 		if pkt.Marker {
 			proc.loss = false
+			proc.buf.Reset()
+		} else if pkt.SequenceNumber-proc.lastSequenceNumber <= 1 && pkt.Timestamp > proc.lastTimestamp {
+			proc.loss = false
+			proc.buf.Reset()
+			proc.buf.Write(pkt.Payload)
+		}
+		return nil
+	}
+
+	if pkt.Timestamp > proc.lastTimestamp && proc.buf.Len() > 0 {
+		defer proc.buf.Reset()
+		h264, err := proc.h264(proc.buf.Bytes())
+		if err != nil {
+			log.Printf("process unpack ps packet err %v, ssrc %v, seq %v, timestamp %v\n", err, pkt.SSRC, pkt.SequenceNumber, pkt.Timestamp)
+		}
+
+		splits := bytes.Split(h264, []byte{0x00, 0x00, 0x00, 0x01})
+		for _, split := range splits {
+			if len(split) == 0 {
+				continue
+			}
+			pkt.Payload = split
+			if err = proc.nextProcess(pkt); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
