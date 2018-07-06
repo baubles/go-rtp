@@ -3,6 +3,7 @@ package rtp
 import (
 	"fmt"
 	"net"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -135,13 +136,13 @@ func (srv *Server) loopHandleRead() {
 				goto NEXT
 			}
 		}
-
 		select {
 		case sess.receive <- pkt:
 		default:
-			logger.Printf("pkt can't be receive, will be drop. ssrs=%v seq=%v\n", pkt.SSRC, pkt.SequenceNumber)
+			logger.Printf("pkt can't be receive, will be drop. ssrc=%v seq=%v\n", pkt.SSRC, pkt.SequenceNumber)
 		}
 	NEXT:
+		runtime.Gosched()
 	}
 
 	srv.sessions.Range(func(key interface{}, val interface{}) bool {
